@@ -120,7 +120,6 @@ use types::{
 };
 use types::{
     // Issue #563: cursor pagination
-    BatchCheckInResult,
     BeneficiaryAuction,
     BeneficiaryAuctionBid,
     BeneficiaryConditionalAcceptance,
@@ -134,19 +133,13 @@ use types::{
     ConflictResolution,
     CountdownConfig,
     CustomMetadataEntry,
-    // Issue #560: Merkle history proofs
-    MerkleLeaf,
-    MerkleProof,
     PasskeyLockout,
     PasskeyRecoveryRequest,
     PasskeyRotationPolicy,
     ProtocolConfig,
     ReleaseTrigger,
     TwoFactorConfigData,
-    VaultConfigTemplate,
-    VaultPage,
     VaultSnapshot,
-    VaultSortField,
     VestingAccelerationConfig,
     VestingForfeitureConfig,
     VestingRolloverConfig,
@@ -171,9 +164,6 @@ use types::{
     COUNTDOWN_NOTIF_TOPIC,
     EMERGENCY_RECOVERY_GENERATED_TOPIC,
     EMERGENCY_RECOVERY_USED_TOPIC,
-    // New event topics
-    HISTORY_PROOF_TOPIC,
-    HISTORY_ROOT_TOPIC,
     MAX_VESTING_SCHEDULES,
     MILESTONE_ADJUST_TOPIC,
     MILESTONE_CLAIM_TOPIC,
@@ -192,9 +182,6 @@ use types::{
     TWO_FACTOR_ENABLED_TOPIC,
     TWO_FACTOR_VERIFIED_TOPIC,
     UNBIND_PASSKEY_BIOMETRIC_TOPIC,
-    VAULT_LIST_TOPIC,
-    VAULT_TMPL_REF_TOPIC,
-    VAULT_TMPL_REG_TOPIC,
     VESTING_ACCELERATED_TOPIC,
     VESTING_FINALIZED_TOPIC,
     VESTING_FORFEITURE_TOPIC,
@@ -1121,8 +1108,7 @@ impl TtlVaultContract {
             .storage()
             .instance()
             .get::<DataKey, UpgradeManifest>(&DataKey::UpgradeManifest)
-            .map(|m| m.version + 1)
-            .unwrap_or(1);
+            .map_or(1, |m| m.version + 1);
 
         let manifest = UpgradeManifest {
             exported_fn_count,
@@ -9789,7 +9775,7 @@ impl TtlVaultContract {
             .get(&DataKey::VaultAuditLogLen(vault_id))
             .unwrap_or(0u32);
         if total > 0 {
-            let num_pages = (total + Self::AUDIT_LOG_PAGE_SIZE - 1) / Self::AUDIT_LOG_PAGE_SIZE;
+            let num_pages = total.div_ceil(Self::AUDIT_LOG_PAGE_SIZE);
             for page_index in 0..num_pages {
                 let page: Vec<AuditEntry> = env
                     .storage()
@@ -10282,10 +10268,8 @@ impl TtlVaultContract {
                 buf[len] = digits[digit_count];
                 len += 1;
             }
-            let code_str = String::from_str(
-                &env,
-                core::str::from_utf8(&buf[..len]).unwrap_or("code"),
-            );
+            let code_str =
+                String::from_str(&env, core::str::from_utf8(&buf[..len]).unwrap_or("code"));
             codes.push_back(BackupCode {
                 code: code_str.clone(),
                 used: false,
@@ -16404,9 +16388,10 @@ impl TtlVaultContract {
     /// Compressed vaults are decompressed transparently on read, and restored
     /// uncompressed by the next state-changing operation.
     pub fn compress_vault(env: Env, vault_id: u64) -> bool {
-        let ttl = Self::try_load_vault(&env, vault_id)
-            .map(|v| vault_ttl_ledgers(v.check_in_interval))
-            .unwrap_or_else(|| panic_with_error!(&env, ContractError::VaultNotFound));
+        let ttl = Self::try_load_vault(&env, vault_id).map_or_else(
+            || panic_with_error!(&env, ContractError::VaultNotFound),
+            |v| vault_ttl_ledgers(v.check_in_interval),
+        );
         vault_compression::compress(&env, vault_id, ttl)
     }
 

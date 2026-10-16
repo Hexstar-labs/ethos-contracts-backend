@@ -108,12 +108,7 @@ fn changing_function_signatures_is_rejected_even_when_export_count_is_unchanged(
     let changed_signature_hash = schema_hash(&env, 3);
     client.set_manifest_with_signatures(&10u32, &5u32, &storage_hash, &signature_hash);
 
-    client.validate_upgrade_compat_sigs(
-        &10u32,
-        &5u32,
-        &storage_hash,
-        &signature_hash,
-    );
+    client.validate_upgrade_compat_sigs(&10u32, &5u32, &storage_hash, &signature_hash);
     let result = client.try_validate_upgrade_compat_sigs(
         &10u32,
         &5u32,
@@ -130,12 +125,8 @@ fn signature_validation_requires_a_signature_baseline() {
     let signature_hash = schema_hash(&env, 2);
     client.set_upgrade_manifest(&10u32, &5u32, &storage_hash);
 
-    let result = client.try_validate_upgrade_compat_sigs(
-        &10u32,
-        &5u32,
-        &storage_hash,
-        &signature_hash,
-    );
+    let result =
+        client.try_validate_upgrade_compat_sigs(&10u32, &5u32, &storage_hash, &signature_hash);
     assert!(result.is_err());
 }
 
