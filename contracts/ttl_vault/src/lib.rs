@@ -15,6 +15,7 @@ use soroban_sdk::{
 pub mod aml;
 pub mod compliance;
 pub mod compliance_policy;
+pub mod composition_rules;
 #[cfg(test)]
 mod compliance_policy_tests;
 pub mod credential_anchoring;
@@ -544,6 +545,18 @@ pub enum ContractError {
     LoanNotDue = 146,
     InvalidLendingConfig = 147,
     InsufficientShares = 148,
+    // Compliance (Issues #547-#550): blacklist, allowlist, KYC, alerts, reports
+    InvalidBlacklistReason = 149,
+    AddressBlacklisted = 150,
+    AddressNotAllowlisted = 151,
+    KycProviderNotSet = 152,
+    KycNotFound = 153,
+    KycRequired = 154,
+    AlertNotFound = 155,
+    InvalidReportRange = 156,
+    ReportSignerNotSet = 157,
+    // Composition rules (Issue #44): new rule conflicts with an enabled rule
+    CompositionRuleConflict = 158,
 }
 
 #[contract]
@@ -1073,7 +1086,7 @@ impl TtlVaultContract {
     /// Admin-only. Records the function-signature fingerprint alongside the
     /// legacy upgrade manifest. The fingerprint is computed from the sorted
     /// public function names, argument types, and return types in the WASM spec.
-    pub fn set_upgrade_manifest_with_signatures(
+    pub fn set_manifest_with_signatures(
         env: Env,
         exported_fn_count: u32,
         error_code_count: u32,
@@ -1098,7 +1111,7 @@ impl TtlVaultContract {
     }
 
     /// Returns the recorded public function-signature fingerprint, if set.
-    pub fn get_upgrade_function_signatures_hash(env: Env) -> Option<BytesN<32>> {
+    pub fn get_upgrade_sigs_hash(env: Env) -> Option<BytesN<32>> {
         env.storage()
             .instance()
             .get(&DataKey::UpgradeFunctionSignaturesHash)
@@ -1145,7 +1158,7 @@ impl TtlVaultContract {
 
     /// Validates the legacy manifest and requires an identical public function
     /// signature fingerprint for the proposed contract.
-    pub fn validate_upgrade_compatibility_with_signatures(
+    pub fn validate_upgrade_compat_sigs(
         env: Env,
         new_exported_fn_count: u32,
         new_error_code_count: u32,
@@ -1229,7 +1242,7 @@ impl TtlVaultContract {
 
     /// Admin-only. Performs an upgrade after validating the full manifest,
     /// including an exact public function-signature fingerprint.
-    pub fn upgrade_with_manifest_and_signatures(
+    pub fn upgrade_with_manifest_sigs(
         env: Env,
         new_wasm_hash: BytesN<32>,
         new_exported_fn_count: u32,
@@ -1239,7 +1252,7 @@ impl TtlVaultContract {
     ) {
         Self::require_admin(&env);
         Self::validate_upgrade(env.clone(), new_wasm_hash.clone());
-        Self::validate_upgrade_compatibility_with_signatures(
+        Self::validate_upgrade_compat_sigs(
             env.clone(),
             new_exported_fn_count,
             new_error_code_count,
@@ -1252,7 +1265,7 @@ impl TtlVaultContract {
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
 
-        Self::set_upgrade_manifest_with_signatures(
+        Self::set_manifest_with_signatures(
             env,
             new_exported_fn_count,
             new_error_code_count,
@@ -2263,7 +2276,6 @@ impl TtlVaultContract {
         );
         Self::log_audit_entry(&env, vault_id, "deposit", &from, "");
         Self::append_activity_log(&env, vault_id, "deposit", &from, "");
-        compliance::record_transaction(&env, amount, true);
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_LEDGERS);
@@ -2559,7 +2571,6 @@ impl TtlVaultContract {
 
         // Issue #569: Record successful withdrawal in audit trail
         Self::record_withdrawal_audit(&env, vault_id, &caller, amount, true, "");
-        compliance::record_transaction(&env, amount, false);
 
         // Issue #571: Emit withdrawal notification event
         env.events().publish(
@@ -10198,28 +10209,31 @@ impl TtlVaultContract {
             // generation unambiguously invalid, even when codes are regenerated
             // in the same ledger timestamp.
             let code_number = vault_id.wrapping_mul(timestamp).wrapping_add(i as u64);
-            let code_str = String::from_str(&env, "code");
-            let mut suffix = String::from_str(&env, "");
+            // "code" + decimal digits of code_number (at most 4 + 20 bytes)
+            let mut buf = [0u8; 24];
+            buf[..4].copy_from_slice(b"code");
+            let mut len = 4usize;
+            let mut digits = [0u8; 20];
+            let mut digit_count = 0usize;
             let mut remaining = code_number;
             if remaining == 0 {
-                suffix.push_str(&String::from_str(&env, "0"));
-            } else {
-                let mut digits = [0u8; 20];
-                let mut digit_count = 0usize;
-                while remaining > 0 {
-                    digits[digit_count] = b'0' + (remaining % 10) as u8;
-                    digit_count += 1;
-                    remaining /= 10;
-                }
-                while digit_count > 0 {
-                    digit_count -= 1;
-                    suffix.push_str(&String::from_bytes(
-                        &env,
-                        &Bytes::from_array(&env, &[digits[digit_count]]),
-                    ));
-                }
+                digits[0] = b'0';
+                digit_count = 1;
             }
-            let code_str = code_str.concat(&suffix);
+            while remaining > 0 {
+                digits[digit_count] = b'0' + (remaining % 10) as u8;
+                digit_count += 1;
+                remaining /= 10;
+            }
+            while digit_count > 0 {
+                digit_count -= 1;
+                buf[len] = digits[digit_count];
+                len += 1;
+            }
+            let code_str = String::from_str(
+                &env,
+                core::str::from_utf8(&buf[..len]).unwrap_or("code"),
+            );
             codes.push_back(BackupCode {
                 code: code_str.clone(),
                 used: false,
@@ -15407,9 +15421,8 @@ impl TtlVaultContract {
         if caller != admin {
             return Err(ContractError::NotAdmin);
         }
-        Ok(composition_rules::register_composition_rule(
-            &env, rule_bytes, priority, tag,
-        ))
+        composition_rules::register_composition_rule(&env, rule_bytes, priority, tag)
+            .map_err(|_| ContractError::CompositionRuleConflict)
     }
 
     /// Enable or disable an existing composition rule.
