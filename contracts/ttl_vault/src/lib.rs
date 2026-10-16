@@ -42,6 +42,9 @@ mod types;
 pub mod vault_compression;
 #[cfg(test)]
 mod vault_compression_tests;
+pub mod lending;
+#[cfg(test)]
+mod lending_tests;
 pub mod vault_governance;
 #[cfg(test)]
 mod vault_governance_tests;
@@ -531,6 +534,16 @@ pub enum ContractError {
     // Upgrade safety: a new contract changed a public function signature.
     UpgradeFunctionSignaturesChanged = 138,
     UpgradeFunctionSignaturesNotSet = 139,
+    // Lending (Issue #609)
+    PoolAlreadyExists = 140,
+    PoolNotFound = 141,
+    InsufficientPoolLiquidity = 142,
+    InsufficientCollateral = 143,
+    LoanNotFound = 144,
+    LoanNotActive = 145,
+    LoanNotDue = 146,
+    InvalidLendingConfig = 147,
+    InsufficientShares = 148,
 }
 
 #[contract]
