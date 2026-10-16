@@ -562,7 +562,7 @@ fn regression_record_failure_with_no_backup_returns_false() {
 #[test]
 fn regression_failover_events_emitted_exactly_once() {
     use soroban_sdk::testutils::Events;
-    use soroban_sdk::{IntoVal, TryIntoVal, Val};
+    use soroban_sdk::{IntoVal, TryFromVal, Val};
 
     let (env, owner, _admin, client, vault_id) = setup();
 
@@ -596,7 +596,7 @@ fn regression_failover_events_emitted_exactly_once() {
         let topics: soroban_sdk::Vec<Val> = e.1.clone().into_val(&env);
         topics
             .get(0)
-            .and_then(|t| t.try_into_val::<_, soroban_sdk::Symbol>(&env).ok())
+            .and_then(|t| soroban_sdk::Symbol::try_from_val(&env, &t).ok())
             .map(|s| s == slice_failover::FAILOVER_ACTIVATED_TOPIC)
             .unwrap_or(false)
     });
@@ -619,7 +619,7 @@ fn regression_failover_events_emitted_exactly_once() {
         let topics: soroban_sdk::Vec<Val> = e.1.clone().into_val(&env);
         topics
             .get(0)
-            .and_then(|t| t.try_into_val::<_, soroban_sdk::Symbol>(&env).ok())
+            .and_then(|t| soroban_sdk::Symbol::try_from_val(&env, &t).ok())
             .map(|s| s == slice_failover::FAILOVER_REVERTED_TOPIC)
             .unwrap_or(false)
     });
